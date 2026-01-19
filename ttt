@@ -1,0 +1,78 @@
+// ============================================================================
+// PRODUCTION-READY VERSION - With Point 2 and Point 3 Fixes
+// ============================================================================
+
+public Mono<SoeDataWrapper<SmbResponseWrapper<FiveGCoverageCheckResponse>>> validateSplitAddress(
+        FiveGCoverageCheckRequest fiveGCoverageCheckRequest) {
+    
+    logger.info("Starting validateSplitAddress with {} customer addresses", 
+            fiveGCoverageCheckRequest.getCustomerAddress() != null ? 
+                    fiveGCoverageCheckRequest.getCustomerAddress().size() : 0);
+    
+    // =========================================================================
+    // POINT 2 FIX: Return error immediately when addresses are invalid
+    // =========================================================================
+    if (isInValidCustomerAddress(fiveGCoverageCheckRequest.getCustomerAddress())) {
+        logger.error("Invalid customer address data - missing required fields (addressLine1 or zipcode)");
+        return buildErrorResponse(new IllegalArgumentException(
+                "Invalid customer address: addressLine1 and zipcode are required"));
+    }
+    
+    // Only reaches here when addresses are valid
+    return Flux.fromIterable(fiveGCoverageCheckRequest.getCustomerAddress())
+            .flatMap(customerAddress -> {
+                SplitAddressRequest splitAddressRequest = fiveGCoverageCheckHelper.buildSplitCustomerAddressRequest(customerAddress);
+                
+                return spectrumAdapterService.splitAddress(splitAddressRequest)
+                        .flatMap(addressResponse -> {
+                            
+                            if (isValidSplitAddressResponse(addressResponse)) {
+                                onevz.soe.smbenrollment.responses.spectrumadapter.Address address = extractSplitAddress(addressResponse);
+                                
+                                if (address != null) {
+                                    updateCustomerAddress(customerAddress, address);
+                                    // =========================================================
+                                    // POINT 3 FIX: Mark address as successfully processed
+                                    // =========================================================
+                                    customerAddress.setIsQualified(true);
+                                    customerAddress.setStatusMsg("Split address validation successful");
+                                    logger.info("Customer address updated successfully from split address service");
+                                }
+                            } else {
+                                // =========================================================
+                                // POINT 3 FIX: Flag when response is invalid
+                                // =========================================================
+                                customerAddress.setIsQualified(false);
+                                customerAddress.setStatusMsg("Invalid response from split address service");
+                                logger.warn("Invalid split address response for address: {}", customerAddress.getAddressLine1());
+                            }
+                            
+                            return Mono.just(customerAddress);
+                        })
+                        .doOnError(e -> logger.error("Error occurred from split address service for address: {}. Error: {}", 
+                                customerAddress.getAddressLine1(), e.getMessage(), e))
+                        // =========================================================
+                        // POINT 3 FIX: Flag addresses that failed processing
+                        // =========================================================
+                        .onErrorResume(error -> {
+                            logger.error("Handling error gracefully for address: {}", customerAddress.getAddressLine1());
+                            
+                            customerAddress.setIsQualified(false);
+                            customerAddress.setStatusMsg("Split address validation failed: " + error.getMessage());
+                            
+                            return Mono.just(customerAddress);
+                        });
+            })
+            .collectList()
+            .flatMap(updatedAddresses -> {
+                logger.info("All split address service calls completed. Total: {}, Qualified: {}", 
+                        updatedAddresses.size(),
+                        updatedAddresses.stream().filter(CustomerAddress::isQualified).count());
+                
+                fiveGCoverageCheckRequest.setCustomerAddress(updatedAddresses);
+                
+                return processValidateCustomerAccountForFiveGCoverage(fiveGCoverageCheckRequest);
+            })
+            .map(this::buildSuccessResponse)
+            .onErrorResume(this::buildErrorResponse);
+}
