@@ -24,6 +24,9 @@ public final class SmbConstants {
     public static final int SUCCESS_STATUS = 1;
     public static final int FAILURE_STATUS = 0;
     public static final String SUCCESS_RETURN_CODE = "0";
+    
+    // Common constants
+    public static final String EMPTY_STRING = "";
 
     // ==================================================================================
     // ERROR MESSAGES - FIX #8 (Lines 254,245,325)
