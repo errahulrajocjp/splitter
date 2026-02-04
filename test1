@@ -1,61 +1,86 @@
+@BeforeEach
+void setUp() {
+    // --- Initialize static mocks FIRST ---
+    mockedRequestAccessContext = mockStatic(RequestAccessContext.class);
+    mockedStringUtilities = mockStatic(StringUtilities.class);
+    mockedCollectionUtilities = mockStatic(CollectionUtilities.class);
+    mockedValidateBusinessAccountHelper = mockStatic(ValidateBusinessAccountHelper.class);
+    mockedBpmMapper = mockStatic(BpmMapper.class);
+
+    // --- MOCK STATIC UTILITIES (StringUtilities, CollectionUtilities) ---
+    mockedStringUtilities.when(() -> StringUtilities.isNotEmptyOrNull((String) any()))
+            .thenAnswer(invocation -> org.springframework.util.StringUtils.hasText(invocation.getArgument(0)));
+
+    mockedStringUtilities.when(() -> StringUtilities.validateString(any()))
+            .thenAnswer(invocation -> Optional.ofNullable(invocation.getArgument(0, String.class)).orElse(""));
+
+    mockedStringUtilities.when(() -> StringUtilities.isEmptyOrNull((String) any()))
+            .thenAnswer(invocation -> !org.springframework.util.StringUtils.hasText(invocation.getArgument(0)));
+
+    mockedCollectionUtilities.when(() -> CollectionUtilities.isNotEmptyOrNull(any(List.class)))
+            .thenAnswer(invocation -> {
+                List<?> list = invocation.getArgument(0);
+                return list != null && !list.isEmpty();
+            });
+
+    mockedCollectionUtilities.when(() -> CollectionUtilities.isEmptyOrNull(any(List.class)))
+            .thenAnswer(invocation -> {
+                List<?> list = invocation.getArgument(0);
+                return list == null || list.isEmpty();
+            });
+
+    // --- MOCK ValidateBusinessAccountHelper's OWN STATIC METHODS --
+    mockedValidateBusinessAccountHelper.when(() -> ValidateBusinessAccountHelper.buildBussAddressDetails(any(ValidateBusinessAccountRequest.class)))
+            .thenCallRealMethod();
+    mockedValidateBusinessAccountHelper.when(() -> ValidateBusinessAccountHelper.buildEnrollmentDetailsForVerifyBusinessAccount(any(ValidateBusinessAccountRequest.class)))
+            .thenCallRealMethod();
+    mockedValidateBusinessAccountHelper.when(() -> ValidateBusinessAccountHelper.buildDunsEnrollmentDetailsForVerifyBusinessAccount(any(ValidateBusinessAccountRequest.class)))
+            .thenCallRealMethod();
+
+    // --- MOCK FiveGCoverageCheckHelper methods for 5G coverage tests ---
+    SplitAddressRequest splitAddressRequest = new SplitAddressRequest();
+    lenient().when(fiveGCoverageCheckHelper.buildSplitCustomerAddressRequest(any(CustomerAddress.class)))
+            .thenReturn(splitAddressRequest);
+
+    NautilusQualificationRequest nautilusRequest = new NautilusQualificationRequest();
+    lenient().when(fiveGCoverageCheckHelper.buildNautilusQualificationRequest(anyList()))
+            .thenReturn(nautilusRequest);
+
+    // --- MOCK BPM MAPPER'S STATIC METHODS ---
+    // ... (rest of your existing setup code)
+}
+
+
+
+
+
+
 @Test
-void testCheck5GCoverageForAddresses_WithAptNumberInSplitResponse() {
+void testCheck5GCoverageForAddresses_NotQualifiedWithoutReturnMessage() {
     // Setup
     FiveGCoverageCheckRequest request = createValidFiveGRequest();
 
-    // **FIX 1: Mock buildSplitCustomerAddressRequest**
-    SplitAddressRequest splitAddressRequest = new SplitAddressRequest();
-    when(fiveGCoverageCheckHelper.buildSplitCustomerAddressRequest(any(CustomerAddress.class)))
-        .thenReturn(splitAddressRequest);
+    SplitAddressResponse validSplitResponse = createValidSplitAddressResponse();
+    when(spectrumAdapterService.splitAddress(any())).thenReturn(Mono.just(validSplitResponse));
 
-    SplitAddressResponse splitResponse = createValidSplitAddressResponse();
-    splitResponse.getData().getAddressSplit().getResponse().getAddress().setAptNum("Apt 5B");
-    when(spectrumAdapterService.splitAddress(any())).thenReturn(Mono.just(splitResponse));
-
-    // Create a properly structured Nautilus response
-    NautilusQualificationResponse nautilusResponse = new NautilusQualificationResponse();
-    NautilusData data = new NautilusData();
-    BulkAddressQualificationResponse qualificationResponse = new BulkAddressQualificationResponse();
-
-    qualificationResponse.setRecordIdentifier("1");
-    qualificationResponse.setReturnCode("00");
-    qualificationResponse.setFiveGHomeQualified(true);
-    qualificationResponse.setReturnMessage("Qualified");
-
-    // Add AddressInfo
-    AddressInfo addressInfo = new AddressInfo();
-    addressInfo.setAddressId("123");
-    addressInfo.setFuzeSiteId("456");
-    addressInfo.setSector("789");
-    qualificationResponse.setAddressInfo(addressInfo);
-
-    // Add AvailableCapacityInfo
-    AvailableCapacityInfo capacityInfo = new AvailableCapacityInfo();
-    capacityInfo.setCbandCapacity("100");
-    capacityInfo.setLteCapacity("50");
-    qualificationResponse.setAvailableCapacityInfo(capacityInfo);
-
-    data.setBulkAddressQualificationResponse(List.of(qualificationResponse));
-    nautilusResponse.setData(data);
-
-    // **FIX 2: Mock buildNautilusQualificationRequest**
-    NautilusQualificationRequest nautilusRequest = new NautilusQualificationRequest();
-    when(fiveGCoverageCheckHelper.buildNautilusQualificationRequest(anyList()))
-        .thenReturn(nautilusRequest);
+    NautilusQualificationResponse nautilusResponse = createValidNautilusResponse();
+    BulkAddressQualificationResponse qualResponse = nautilusResponse.getData()
+            .getBulkAddressQualificationResponse().get(0);
+    qualResponse.setFiveGHomeQualified(false);
+    qualResponse.setReturnCode("99");
+    qualResponse.setReturnMessage(null);
 
     when(spectrumAdapterService.checkAddressQualification(any()))
-        .thenReturn(Mono.just(nautilusResponse));
+            .thenReturn(Mono.just(nautilusResponse));
 
     // Execute
     StepVerifier.create(validateBusinessAccountHelper.check5GCoverageForAddresses(request))
-        .assertNext(response -> {
-            assertNotNull(response);
-            assertNotNull(response.getData());
-            assertNotNull(response.getData().getResponse());
-            FiveGCoverageCheckResponse coverageResponse = response.getData().getResponse();
-            assertNotNull(coverageResponse.getCustomerAddress());
-            assertFalse(coverageResponse.getCustomerAddress().isEmpty());
-            assertEquals("Apt 5B", coverageResponse.getCustomerAddress().get(0).getAddressLine2());
-        })
-        .verifyComplete();
+            .assertNext(response -> {
+                assertNotNull(response);
+                FiveGCoverageCheckResponse coverageResponse = response.getData().getResponse();
+                CustomerAddress addr = coverageResponse.getCustomerAddress().get(0);
+                assertFalse(addr.isQualified());
+                assertEquals(SmbConstants.NOT_QUALIFIED_STATUS_MSG, addr.getStatusMsg());
+            })
+            .verifyComplete();
 }
