@@ -1,28 +1,34 @@
 @Test
-void testCheck5GCoverageForAddresses_SplitAddressServiceError() {
-    // Setup
+void testCheck5GCoverageForAddresses_AddressSkippedMissingFields() {
+    // Setup - When ANY address has missing required fields, the entire request fails validation
     FiveGCoverageCheckRequest request = new FiveGCoverageCheckRequest();
     List<CustomerAddress> addresses = new ArrayList<>();
-    CustomerAddress address = new CustomerAddress();
-    address.setAddressLine1("123 Main St");
-    address.setZipCode("10001");
-    addresses.add(address);
+
+    CustomerAddress validAddress = new CustomerAddress();
+    validAddress.setAddressLine1("123 Main St");
+    validAddress.setZipCode("10001");
+
+    CustomerAddress invalidAddress = new CustomerAddress();
+    invalidAddress.setAddressLine1(null);  // Missing required field
+    invalidAddress.setZipCode("20002");
+
+    addresses.add(validAddress);
+    addresses.add(invalidAddress);
     request.setCustomerAddress(addresses);
 
-    when(spectrumAdapterService.splitAddress(any()))
-            .thenReturn(Mono.error(new RuntimeException("Service unavailable")));
+    // NO need to mock splitAddress - validation fails before reaching that point
 
-    // Execute - When ALL addresses fail (service error), we get FAILURE_STATUS
+    // Execute - Upfront validation fails, returns error response
     StepVerifier.create(validateBusinessAccountHelper.check5GCoverageForAddresses(request))
             .assertNext(response -> {
                 assertNotNull(response);
                 assertNotNull(response.getData());
-                // When all addresses fail, statusCode is FAILURE_STATUS
+                // Validation fails upfront - FAILURE_STATUS
                 assertEquals(SmbConstants.FAILURE_STATUS, response.getData().getStatusCode());
-                // Errors should be populated
+                // Errors populated with validation message
                 assertNotNull(response.getData().getErrors());
                 assertFalse(response.getData().getErrors().isEmpty());
-                // Response object is null when error occurs
+                // Response is null on validation error
                 assertNull(response.getData().getResponse());
             })
             .verifyComplete();
