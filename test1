@@ -1,5 +1,5 @@
 @Test
-void testCheck5GCoverageForAddresses_InvalidSplitAddressResponse() {
+void testCheck5GCoverageForAddresses_SplitAddressServiceError() {
     // Setup
     FiveGCoverageCheckRequest request = new FiveGCoverageCheckRequest();
     List<CustomerAddress> addresses = new ArrayList<>();
@@ -9,19 +9,10 @@ void testCheck5GCoverageForAddresses_InvalidSplitAddressResponse() {
     addresses.add(address);
     request.setCustomerAddress(addresses);
 
-    // Create invalid split response (address = null)
-    SplitAddressResponse invalidResponse = new SplitAddressResponse();
-    SplitAddressResponse.SplitAddressResponseData data = new SplitAddressResponse.SplitAddressResponseData();
-    AddressSplit addressSplit = new AddressSplit();
-    AddressSplit.AddressSplitServiceResponse splitResponse = new AddressSplit.AddressSplitServiceResponse();
-    splitResponse.setAddress(null);  // Invalid - address is null
-    addressSplit.setResponse(splitResponse);
-    data.setAddressSplit(addressSplit);
-    invalidResponse.setData(data);
+    when(spectrumAdapterService.splitAddress(any()))
+            .thenReturn(Mono.error(new RuntimeException("Service unavailable")));
 
-    when(spectrumAdapterService.splitAddress(any())).thenReturn(Mono.just(invalidResponse));
-
-    // Execute - When ALL addresses fail, we get an ERROR response (FAILURE_STATUS)
+    // Execute - When ALL addresses fail (service error), we get FAILURE_STATUS
     StepVerifier.create(validateBusinessAccountHelper.check5GCoverageForAddresses(request))
             .assertNext(response -> {
                 assertNotNull(response);
