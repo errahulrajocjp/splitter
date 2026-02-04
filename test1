@@ -1,0 +1,61 @@
+@Test
+@DisplayName("5G Coverage Check - Invalid Nautilus Response")
+void testCheck5GCoverageForAddresses_InvalidNautilusResponse() {
+    // Given: Two addresses that fail split address validation
+    FiveGCoverageCheckRequest request = new FiveGCoverageCheckRequest();
+    List<CustomerAddress> addresses = Arrays.asList(
+        createCustomerAddress("100 Main St", "12345"),
+        createCustomerAddress("200 Oak Ave", "54321")
+    );
+    request.setCustomerAddress(addresses);
+
+    // Create a valid SplitAddressRequest for the mock to return
+    SplitAddressRequest splitAddressRequest = new SplitAddressRequest();
+    AddressLineBased addressLineBased = new AddressLineBased();
+    addressLineBased.setAddressLine1("100 Main St");
+    addressLineBased.setZipCode("12345");
+    splitAddressRequest.setAddressLineBased(addressLineBased);
+
+    // **FIX: Mock the helper method to return a valid request**
+    when(fiveGCoverageCheckHelper.buildSplitCustomerAddressRequest(any(CustomerAddress.class)))
+        .thenReturn(splitAddressRequest);
+
+    // Mock split address calls to return invalid response
+    SplitAddressResponse invalidSplitResponse = new SplitAddressResponse();
+    invalidSplitResponse.setData(null);  // Invalid response
+
+    when(spectrumAdapterService.splitAddress(any(SplitAddressRequest.class)))
+        .thenReturn(Mono.just(invalidSplitResponse));
+
+    // When
+    Mono<SoeDataWrapper<SmbResponseWrapper<FiveGCoverageCheckResponse>>> result =
+        validateBusinessAccountHelper.check5GCoverageForAddresses(request);
+
+    // Then: Should return success response with failed addresses
+    StepVerifier.create(result)
+        .expectNextMatches(response -> {
+            assertNotNull(response);
+            assertNotNull(response.getData());
+
+            SmbResponseWrapper<FiveGCoverageCheckResponse> wrapper = response.getData();
+            assertEquals(SmbConstants.SUCCESS_STATUS, wrapper.getStatusCode());
+
+            FiveGCoverageCheckResponse coverageResponse = wrapper.getResponse();
+            assertNotNull(coverageResponse);
+            assertNotNull(coverageResponse.getCustomerAddress());
+            assertEquals(2, coverageResponse.getCustomerAddress().size());
+
+            // Verify all addresses are marked as failed
+            for (CustomerAddress addr : coverageResponse.getCustomerAddress()) {
+                assertFalse(addr.isQualified());
+                assertTrue(addr.getStatusMsg().contains("failed") || 
+                          addr.getStatusMsg().contains("Failed"));
+            }
+
+            return true;
+        })
+        .verifyComplete();
+
+    // Verify Nautilus was NOT called since all addresses failed split
+    verify(spectrumAdapterService, never()).checkAddressQualification(any());
+}
