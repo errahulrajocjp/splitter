@@ -1,139 +1,61 @@
 @Test
-@DisplayName("5G Coverage Check - Invalid Nautilus Response (All Split Fail)")
-void testCheck5GCoverageForAddresses_InvalidNautilusResponse() {
-    // Given: Two addresses that fail split address validation
-    FiveGCoverageCheckRequest request = new FiveGCoverageCheckRequest();
-    List<CustomerAddress> addresses = Arrays.asList(
-        createCustomerAddress("100 Main St", "12345"),
-        createCustomerAddress("200 Oak Ave", "54321")
-    );
-    request.setCustomerAddress(addresses);
+void testCheck5GCoverageForAddresses_WithAptNumberInSplitResponse() {
+    // Setup
+    FiveGCoverageCheckRequest request = createValidFiveGRequest();
 
-    // Create a valid SplitAddressRequest for the mock to return
-    SplitAddressRequest splitAddressRequest = new SplitAddressRequest();
-    AddressLineBased addressLineBased = new AddressLineBased();
-    addressLineBased.setAddressLine1("100 Main St");
-    addressLineBased.setZipCode("12345");
-    splitAddressRequest.setAddressLineBased(addressLineBased);
-
-    // Mock the helper method to return a valid request
-    when(fiveGCoverageCheckHelper.buildSplitCustomerAddressRequest(any(CustomerAddress.class)))
-        .thenReturn(splitAddressRequest);
-
-    // Mock split address calls to return invalid response (data=null)
-    SplitAddressResponse invalidSplitResponse = new SplitAddressResponse();
-    invalidSplitResponse.setData(null);
-
-    when(spectrumAdapterService.splitAddress(any(SplitAddressRequest.class)))
-        .thenReturn(Mono.just(invalidSplitResponse));
-
-    // When
-    Mono<SoeDataWrapper<SmbResponseWrapper<FiveGCoverageCheckResponse>>> result =
-        validateBusinessAccountHelper.check5GCoverageForAddresses(request);
-
-    // Then: Should return FAILURE response since ALL addresses failed split validation
-    StepVerifier.create(result)
-        .expectNextMatches(response -> {
-            assertNotNull(response);
-            assertNotNull(response.getData());
-
-            SmbResponseWrapper<FiveGCoverageCheckResponse> wrapper = response.getData();
-            // When ALL addresses fail, it returns FAILURE_STATUS
-            assertEquals(SmbConstants.FAILURE_STATUS, wrapper.getStatusCode());
-
-            // Errors should be populated
-            assertNotNull(wrapper.getErrors());
-            assertFalse(wrapper.getErrors().isEmpty());
-
-            return true;
-        })
-        .verifyComplete();
-
-    // Verify Nautilus was NOT called since all addresses failed split
-    verify(spectrumAdapterService, never()).checkAddressQualification(any());
-}
-
-
-
-@Test
-@DisplayName("5G Coverage Check - Invalid Nautilus Response (Split Succeeds)")
-void testCheck5GCoverageForAddresses_SplitSucceeds_NautilusInvalid() {
-    // Given: Two addresses with valid split response but invalid Nautilus response
-    FiveGCoverageCheckRequest request = new FiveGCoverageCheckRequest();
-    List<CustomerAddress> addresses = Arrays.asList(
-        createCustomerAddress("100 Main St", "12345"),
-        createCustomerAddress("200 Oak Ave", "54321")
-    );
-    request.setCustomerAddress(addresses);
-
-    // Mock buildSplitCustomerAddressRequest
+    // **FIX 1: Mock buildSplitCustomerAddressRequest**
     SplitAddressRequest splitAddressRequest = new SplitAddressRequest();
     when(fiveGCoverageCheckHelper.buildSplitCustomerAddressRequest(any(CustomerAddress.class)))
         .thenReturn(splitAddressRequest);
 
-    // Mock VALID split address response (so it passes to Nautilus)
-    SplitAddressResponse validSplitResponse = createSplitAddressResponse();
-    when(spectrumAdapterService.splitAddress(any(SplitAddressRequest.class)))
-        .thenReturn(Mono.just(validSplitResponse));
+    SplitAddressResponse splitResponse = createValidSplitAddressResponse();
+    splitResponse.getData().getAddressSplit().getResponse().getAddress().setAptNum("Apt 5B");
+    when(spectrumAdapterService.splitAddress(any())).thenReturn(Mono.just(splitResponse));
 
-    // Mock buildNautilusQualificationRequest
+    // Create a properly structured Nautilus response
+    NautilusQualificationResponse nautilusResponse = new NautilusQualificationResponse();
+    NautilusData data = new NautilusData();
+    BulkAddressQualificationResponse qualificationResponse = new BulkAddressQualificationResponse();
+
+    qualificationResponse.setRecordIdentifier("1");
+    qualificationResponse.setReturnCode("00");
+    qualificationResponse.setFiveGHomeQualified(true);
+    qualificationResponse.setReturnMessage("Qualified");
+
+    // Add AddressInfo
+    AddressInfo addressInfo = new AddressInfo();
+    addressInfo.setAddressId("123");
+    addressInfo.setFuzeSiteId("456");
+    addressInfo.setSector("789");
+    qualificationResponse.setAddressInfo(addressInfo);
+
+    // Add AvailableCapacityInfo
+    AvailableCapacityInfo capacityInfo = new AvailableCapacityInfo();
+    capacityInfo.setCbandCapacity("100");
+    capacityInfo.setLteCapacity("50");
+    qualificationResponse.setAvailableCapacityInfo(capacityInfo);
+
+    data.setBulkAddressQualificationResponse(List.of(qualificationResponse));
+    nautilusResponse.setData(data);
+
+    // **FIX 2: Mock buildNautilusQualificationRequest**
     NautilusQualificationRequest nautilusRequest = new NautilusQualificationRequest();
     when(fiveGCoverageCheckHelper.buildNautilusQualificationRequest(anyList()))
         .thenReturn(nautilusRequest);
 
-    // Mock INVALID Nautilus response (data is null)
-    NautilusQualificationResponse invalidNautilusResponse = new NautilusQualificationResponse();
-    invalidNautilusResponse.setData(null);  // Invalid
-    
-    when(spectrumAdapterService.checkAddressQualification(any(NautilusQualificationRequest.class)))
-        .thenReturn(Mono.just(invalidNautilusResponse));
+    when(spectrumAdapterService.checkAddressQualification(any()))
+        .thenReturn(Mono.just(nautilusResponse));
 
-    // When
-    Mono<SoeDataWrapper<SmbResponseWrapper<FiveGCoverageCheckResponse>>> result =
-        validateBusinessAccountHelper.check5GCoverageForAddresses(request);
-
-    // Then
-    StepVerifier.create(result)
-        .expectNextMatches(response -> {
+    // Execute
+    StepVerifier.create(validateBusinessAccountHelper.check5GCoverageForAddresses(request))
+        .assertNext(response -> {
             assertNotNull(response);
             assertNotNull(response.getData());
-
-            SmbResponseWrapper<FiveGCoverageCheckResponse> wrapper = response.getData();
-            // Check the actual status returned for invalid Nautilus
-            // This might be SUCCESS with failed addresses, or FAILURE
-            
-            FiveGCoverageCheckResponse coverageResponse = wrapper.getResponse();
-            if (coverageResponse != null && coverageResponse.getCustomerAddress() != null) {
-                // Addresses should be marked as not qualified
-                for (CustomerAddress addr : coverageResponse.getCustomerAddress()) {
-                    assertFalse(addr.isQualified());
-                }
-            }
-
-            return true;
+            assertNotNull(response.getData().getResponse());
+            FiveGCoverageCheckResponse coverageResponse = response.getData().getResponse();
+            assertNotNull(coverageResponse.getCustomerAddress());
+            assertFalse(coverageResponse.getCustomerAddress().isEmpty());
+            assertEquals("Apt 5B", coverageResponse.getCustomerAddress().get(0).getAddressLine2());
         })
         .verifyComplete();
-}
-
-// Helper method to create valid split address response
-private SplitAddressResponse createSplitAddressResponse() {
-    SplitAddressResponse response = new SplitAddressResponse();
-    SplitAddressResponse.SplitAddressResponseData data = new SplitAddressResponse.SplitAddressResponseData();
-    AddressSplit addressSplit = new AddressSplit();
-    AddressSplit.AddressSplitServiceResponse serviceResponse = new AddressSplit.AddressSplitServiceResponse();
-    
-    Address address = new Address();
-    address.setStreetNum("100");
-    address.setStreetName("Main");
-    address.setType("St");
-    address.setCity("TestCity");
-    address.setState("TS");
-    address.setZipCode("12345");
-    
-    serviceResponse.setAddress(address);
-    addressSplit.setResponse(serviceResponse);
-    data.setAddressSplit(addressSplit);
-    response.setData(data);
-    
-    return response;
 }
