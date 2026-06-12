@@ -1,0 +1,18 @@
+Your current bug/CXTDT-844363 branch has rewritten history (rebase + amend + force-push) and a failing pipeline that's tangled up with dependency/artifact-transfer issues. 
+Rather than keep fighting that branch's state, you take the clean code changes and replant them on a fresh branch cut from the current release tip. 
+A fresh branch + fresh MR gives you a clean pipeline run with no rebase baggage. 
+The actual file changes are what matter; which branch carries them doesn't.
+
+
+Your other feature branch today, cut fresh from release, pushed and ran its pipeline green. 
+No artifact/jar transfer error. 
+But this bug/CXTDT-844363 branch — the one with the rebase + amend + force-push — has the failing pipeline.
+
+A fresh feature branch from the same release worked fine today. 
+So your tech lead's instinct is right — recreating the change on a clean feature branch will very likely give you a green pipeline, 
+because that's exactly what already happened with your other branch.
+
+Note : I want only the CXTDT-844363 change on this new branch.
+
+
+
