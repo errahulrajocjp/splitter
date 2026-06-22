@@ -1,0 +1,146 @@
+@Test
+		@DisplayName("Should add error when source and target customerId are exactly the same")
+		void validateReassignNewRelatedParty_SameCustomerId_ExactMatch_AddsError() {
+			// Arrange - source relatedParty.customerId == newRelatedParty.customerId (identical strings)
+			List<Details> errorDetailsList = new ArrayList<>();
+			BulkOrderRequest bulkOrderRequest = createReassignBulkOrderRequest("123456789", "987654321");
+			bulkOrderRequest.getRelatedParty().setCustomerId("242035321");
+			bulkOrderRequest.getNewRelatedParty().setCustomerId("242035321"); // same as source
+
+			// Act
+			ReflectionTestUtils.invokeMethod(bulkOrderController, "validateReassignNewRelatedParty",
+					errorDetailsList, bulkOrderRequest);
+
+			// Assert
+			assertTrue(errorDetailsList.stream().anyMatch(d ->
+							OrderDomainConstants.CUSTOMER_ID.equals(d.getField())
+									&& "Source and Target customerId cannot be same".equals(d.getIssue())),
+					"Should report 'Source and Target customerId cannot be same' when both customerIds are identical");
+		}
+
+		@Test
+		@DisplayName("Should NOT add same-customerId error when target customerId has surrounding whitespace (no trim in comparison)")
+		void validateReassignNewRelatedParty_SameCustomerId_WithWhitespace_NoError() {
+			// Arrange - production code uses StringUtils.equalsIgnoreCase(sourceCustomerId, targetCustomerId)
+			// WITHOUT .trim(), so "242035321" vs "  242035321  " are treated as different strings.
+			// No same-customerId error should fire; only the non-numeric format error fires for the padded value.
+			List<Details> errorDetailsList = new ArrayList<>();
+			BulkOrderRequest bulkOrderRequest = createReassignBulkOrderRequest("123456789", "987654321");
+			bulkOrderRequest.getRelatedParty().setCustomerId("242035321");
+			bulkOrderRequest.getNewRelatedParty().setCustomerId("  242035321  "); // padded - not equal without trim
+
+			// Act
+			ReflectionTestUtils.invokeMethod(bulkOrderController, "validateReassignNewRelatedParty",
+					errorDetailsList, bulkOrderRequest);
+
+			// Assert - same-customerId error must NOT appear because raw strings differ
+			assertTrue(errorDetailsList.stream().noneMatch(d ->
+							"Source and Target customerId cannot be same".equals(d.getIssue())),
+					"Should NOT report same-customerId error when target has whitespace padding and no trim is applied");
+		}
+
+		@Test
+		@DisplayName("Should NOT add same-customerId error when source and target customerIds are different")
+		void validateReassignNewRelatedParty_DifferentCustomerId_NoSameCustomerIdError() {
+			// Arrange - source and target customerIds are distinct valid values
+			List<Details> errorDetailsList = new ArrayList<>();
+			BulkOrderRequest bulkOrderRequest = createReassignBulkOrderRequest("123456789", "987654321");
+			bulkOrderRequest.getRelatedParty().setCustomerId("242035321");
+			bulkOrderRequest.getNewRelatedParty().setCustomerId("555666777"); // different from source
+
+			// Act
+			ReflectionTestUtils.invokeMethod(bulkOrderController, "validateReassignNewRelatedParty",
+					errorDetailsList, bulkOrderRequest);
+
+			// Assert
+			assertTrue(errorDetailsList.stream().noneMatch(d ->
+							"Source and Target customerId cannot be same".equals(d.getIssue())),
+					"Should NOT report duplicate-customerId error when customerIds are different");
+		}
+
+		@Test
+		@DisplayName("Should NOT add same-customerId error when target customerId is blank")
+		void validateReassignNewRelatedParty_BlankTargetCustomerId_NoSameCustomerIdError() {
+			// Arrange - targetCustomerId is blank; isNotBlank guard must skip the same-id check
+			List<Details> errorDetailsList = new ArrayList<>();
+			BulkOrderRequest bulkOrderRequest = createReassignBulkOrderRequest("123456789", "987654321");
+			bulkOrderRequest.getRelatedParty().setCustomerId("242035321");
+			bulkOrderRequest.getNewRelatedParty().setCustomerId(""); // blank target
+
+			// Act
+			ReflectionTestUtils.invokeMethod(bulkOrderController, "validateReassignNewRelatedParty",
+					errorDetailsList, bulkOrderRequest);
+
+			// Assert - "required" error fires, but NOT the same-id error
+			assertTrue(errorDetailsList.stream().anyMatch(d ->
+							OrderDomainConstants.CUSTOMER_ID.equals(d.getField())
+									&& "customerId is required in newRelatedParty for Reassign order".equals(d.getIssue())),
+					"Should report customerId required error for blank target");
+			assertTrue(errorDetailsList.stream().noneMatch(d ->
+							"Source and Target customerId cannot be same".equals(d.getIssue())),
+					"Should NOT report same-customerId error when targetCustomerId is blank");
+		}
+
+		@Test
+		@DisplayName("Should NOT add same-customerId error when source relatedParty is null")
+		void validateReassignNewRelatedParty_NullSourceRelatedParty_NoSameCustomerIdError() {
+			// Arrange - relatedParty null; null-guard on getRelatedParty() must prevent NPE
+			List<Details> errorDetailsList = new ArrayList<>();
+			BulkOrderRequest bulkOrderRequest = createReassignBulkOrderRequest("123456789", "987654321");
+			bulkOrderRequest.setRelatedParty(null); // null source
+			bulkOrderRequest.getNewRelatedParty().setCustomerId("242035321");
+
+			// Act - must not throw NullPointerException
+			ReflectionTestUtils.invokeMethod(bulkOrderController, "validateReassignNewRelatedParty",
+					errorDetailsList, bulkOrderRequest);
+
+			// Assert
+			assertTrue(errorDetailsList.stream().noneMatch(d ->
+							"Source and Target customerId cannot be same".equals(d.getIssue())),
+					"Should NOT report same-customerId error when source relatedParty is null");
+		}
+
+		@Test
+		@DisplayName("Should NOT add same-customerId error when source customerId is blank")
+		void validateReassignNewRelatedParty_BlankSourceCustomerId_NoSameCustomerIdError() {
+			// Arrange - sourceCustomerId is blank; isNotBlank guard on source must skip the same-id check
+			List<Details> errorDetailsList = new ArrayList<>();
+			BulkOrderRequest bulkOrderRequest = createReassignBulkOrderRequest("123456789", "987654321");
+			bulkOrderRequest.getRelatedParty().setCustomerId(""); // blank source
+			bulkOrderRequest.getNewRelatedParty().setCustomerId("242035321");
+
+			// Act
+			ReflectionTestUtils.invokeMethod(bulkOrderController, "validateReassignNewRelatedParty",
+					errorDetailsList, bulkOrderRequest);
+
+			// Assert
+			assertTrue(errorDetailsList.stream().noneMatch(d ->
+							"Source and Target customerId cannot be same".equals(d.getIssue())),
+					"Should NOT report same-customerId error when source customerId is blank");
+		}
+
+		@Test
+		@DisplayName("Should add same-customerId error with correct field and value in Details object")
+		void validateReassignNewRelatedParty_SameCustomerId_DetailsFieldAndValue_Correct() {
+			// Arrange - verifies the Details object carries the right field name and the duplicated value
+			String duplicatedCustomerId = "333444555";
+			List<Details> errorDetailsList = new ArrayList<>();
+			BulkOrderRequest bulkOrderRequest = createReassignBulkOrderRequest("123456789", "987654321");
+			bulkOrderRequest.getRelatedParty().setCustomerId(duplicatedCustomerId);
+			bulkOrderRequest.getNewRelatedParty().setCustomerId(duplicatedCustomerId);
+
+			// Act
+			ReflectionTestUtils.invokeMethod(bulkOrderController, "validateReassignNewRelatedParty",
+					errorDetailsList, bulkOrderRequest);
+
+			// Assert - field must be CUSTOMER_ID constant, value must carry the duplicated id
+			Details matchingDetail = errorDetailsList.stream()
+					.filter(d -> "Source and Target customerId cannot be same".equals(d.getIssue()))
+					.findFirst()
+					.orElse(null);
+			assertNotNull(matchingDetail, "A Details entry with the same-customerId message must be present");
+			assertEquals(OrderDomainConstants.CUSTOMER_ID, matchingDetail.getField(),
+					"Details.field must equal OrderDomainConstants.CUSTOMER_ID");
+			assertEquals(duplicatedCustomerId, matchingDetail.getValue(),
+					"Details.value must carry the duplicated customerId");
+		}
